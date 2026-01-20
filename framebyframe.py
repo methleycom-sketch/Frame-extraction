@@ -171,6 +171,7 @@ class VideoFrameExtractorApp:
         self.gallery_good_indices = []  # indices shown in gallery
         self.gallery_menu = None
         self._gallery_menu_frame_idx = None
+        self.gallery_hamming_threshold = 100.0
 
         self._build_ui()
         self._set_status("Drop a video file, open one, or paste a link. Use Toggle View for Gallery.")
@@ -341,6 +342,18 @@ class VideoFrameExtractorApp:
         self.scan_status = ttk.Label(q_frame, text="")
         self.scan_status.pack(anchor="w", pady=(6, 0))
 
+        gallery_filter_frame = ttk.LabelFrame(right, text="Gallery Hamming Filter", padding=10)
+        gallery_filter_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(gallery_filter_frame, text="Max distance:").grid(row=0, column=0, sticky="w")
+        self.hamming_threshold_var = tk.StringVar(value="100")
+        self.hamming_entry = ttk.Entry(gallery_filter_frame, width=6, textvariable=self.hamming_threshold_var)
+        self.hamming_entry.grid(row=0, column=1, padx=(6, 4), sticky="w")
+        ttk.Label(gallery_filter_frame, text="%").grid(row=0, column=2, sticky="w")
+
+        self.hamming_entry.bind("<Return>", self._on_hamming_threshold_changed)
+        self.hamming_entry.bind("<FocusOut>", self._on_hamming_threshold_changed)
+
         # Status bar
         self.status = ttk.Label(self.root, text="", anchor="w", padding=6)
         self.status.pack(fill="x")
@@ -435,6 +448,12 @@ class VideoFrameExtractorApp:
         if not self.video_path or self.total_frames <= 0:
             return
 
+        threshold = self._get_hamming_threshold()
+        if threshold is None:
+            self._set_status("Invalid hamming distance. Enter a value between 0 and 100.")
+            return
+        self.gallery_hamming_threshold = threshold
+
         self.clear_gallery()
         self.gallery_building = True
         self.gallery_stop_flag = False
@@ -457,6 +476,7 @@ class VideoFrameExtractorApp:
             # thumbnail sizing (width)
             thumb_w = 190
             idx = 0
+            last_hash = None
             while idx < self.total_frames:
                 if self.gallery_stop_flag:
                     break
@@ -470,7 +490,16 @@ class VideoFrameExtractorApp:
                 self.quality_cache[idx] = (is_bad, reasons, metrics)
 
                 if is_bad:
+                    idx += 1
                     continue
+
+                frame_hash = self._compute_frame_hash(frame)
+                if last_hash is not None:
+                    distance_pct = self._hamming_distance_pct(last_hash, frame_hash)
+                    if distance_pct > self.gallery_hamming_threshold:
+                        idx += 1
+                        continue
+                last_hash = frame_hash
 
                 # Convert to thumbnail PIL
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -691,6 +720,42 @@ class VideoFrameExtractorApp:
 
         if self.current_bgr is not None:
             self._update_quality_label(self.current_frame_index, self.current_bgr)
+
+    def _get_hamming_threshold(self):
+        raw = self.hamming_threshold_var.get().strip()
+        if raw == "":
+            return 100.0
+        try:
+            value = float(raw)
+        except ValueError:
+            return None
+        return max(0.0, min(100.0, value))
+
+    def _on_hamming_threshold_changed(self, _=None):
+        threshold = self._get_hamming_threshold()
+        if threshold is None:
+            self._set_status("Invalid hamming distance. Enter a value between 0 and 100.")
+            return
+
+        self.gallery_hamming_threshold = threshold
+        self.hamming_threshold_var.set(f"{threshold:g}")
+        self.clear_gallery()
+        if self.gallery_mode:
+            self.build_gallery()
+
+    def _compute_frame_hash(self, frame, size: int = 8) -> int:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(gray, (size, size), interpolation=cv2.INTER_AREA)
+        mean = float(small.mean())
+        hash_value = 0
+        for bit in (small > mean).flatten():
+            hash_value = (hash_value << 1) | int(bool(bit))
+        return hash_value
+
+    def _hamming_distance_pct(self, hash_a: int, hash_b: int, bits: int = 64) -> float:
+        if bits <= 0:
+            return 0.0
+        return (hash_a ^ hash_b).bit_count() / bits * 100.0
 
     def _evaluate_frame_quality(self, idx, frame):
         if idx in self.quality_cache:
