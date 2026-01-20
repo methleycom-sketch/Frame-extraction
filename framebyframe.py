@@ -345,8 +345,8 @@ class VideoFrameExtractorApp:
         gallery_filter_frame = ttk.LabelFrame(right, text="Gallery Hamming Filter", padding=10)
         gallery_filter_frame.pack(fill="x", pady=(10, 0))
 
-        ttk.Label(gallery_filter_frame, text="Max distance:").grid(row=0, column=0, sticky="w")
-        self.hamming_threshold_var = tk.StringVar(value="100")
+        ttk.Label(gallery_filter_frame, text="Min distance (hide if <=):").grid(row=0, column=0, sticky="w")
+        self.hamming_threshold_var = tk.StringVar(value="5")
         self.hamming_entry = ttk.Entry(gallery_filter_frame, width=6, textvariable=self.hamming_threshold_var)
         self.hamming_entry.grid(row=0, column=1, padx=(6, 4), sticky="w")
         ttk.Label(gallery_filter_frame, text="%").grid(row=0, column=2, sticky="w")
@@ -496,7 +496,7 @@ class VideoFrameExtractorApp:
                 frame_hash = self._compute_frame_hash(frame)
                 if last_hash is not None:
                     distance_pct = self._hamming_distance_pct(last_hash, frame_hash)
-                    if distance_pct > self.gallery_hamming_threshold:
+                    if distance_pct <= self.gallery_hamming_threshold:
                         idx += 1
                         continue
                 last_hash = frame_hash
@@ -724,7 +724,7 @@ class VideoFrameExtractorApp:
     def _get_hamming_threshold(self):
         raw = self.hamming_threshold_var.get().strip()
         if raw == "":
-            return 100.0
+            return 5.0
         try:
             value = float(raw)
         except ValueError:
