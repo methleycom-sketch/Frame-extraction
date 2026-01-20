@@ -795,6 +795,12 @@ class VideoFrameExtractorApp:
         self._show_single_view()
 
         self.show_frame(0, prefer_good=True, direction=+1)
+        self._start_gallery_preload()
+
+    def _start_gallery_preload(self):
+        if self.gallery_building or not self.video_path or self.total_frames <= 0:
+            return
+        self.build_gallery()
 
     # ---------------- Link loading (yt-dlp) ----------------
 
