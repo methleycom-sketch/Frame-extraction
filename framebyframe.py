@@ -604,6 +604,8 @@ class VideoFrameExtractorApp:
         img_label.bind("<Button-1>", on_click)
         meta.bind("<Button-1>", on_click)
         img_label.bind("<Button-3>", lambda event, idx=frame_idx: self._show_gallery_context_menu(event, idx))
+        meta.bind("<Button-3>", lambda event, idx=frame_idx: self._show_gallery_context_menu(event, idx))
+        tile.bind("<Button-3>", lambda event, idx=frame_idx: self._show_gallery_context_menu(event, idx))
 
     # ---------------- Cache ----------------
 
