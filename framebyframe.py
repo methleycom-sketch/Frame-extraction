@@ -5,6 +5,7 @@ import threading
 import tempfile
 import time
 import tkinter as tk
+from collections import deque
 from tkinter import ttk, filedialog, messagebox
 
 from PIL import Image, ImageTk
@@ -165,9 +166,11 @@ class VideoFrameExtractorApp:
         self.gallery_mode = False
         self.gallery_building = False
         self.gallery_stop_flag = False
-        self.gallery_queue = []  # list of (frame_idx, photoimage)
+        self.gallery_queue = deque()  # deque of (frame_idx, pil_thumb)
         self.gallery_thumb_refs = []  # keep references to PhotoImage
         self.gallery_good_indices = []  # indices shown in gallery
+        self.gallery_menu = None
+        self._gallery_menu_frame_idx = None
 
         self._build_ui()
         self._set_status("Drop a video file, open one, or paste a link. Use Toggle View for Gallery.")
@@ -453,14 +456,13 @@ class VideoFrameExtractorApp:
         try:
             # thumbnail sizing (width)
             thumb_w = 190
-
-            for idx in range(self.total_frames):
+            idx = 0
+            while idx < self.total_frames:
                 if self.gallery_stop_flag:
                     break
-
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
                 ok, frame = cap.read()
                 if not ok or frame is None:
+                    idx += 1
                     continue
 
                 # Evaluate quality (also cache for later)
@@ -486,6 +488,7 @@ class VideoFrameExtractorApp:
                 if idx % 150 == 0:
                     self.gallery_queue.append(("__progress__", idx))
 
+                idx += 1
         finally:
             try:
                 cap.release()
@@ -503,11 +506,11 @@ class VideoFrameExtractorApp:
             pass
 
         # Add a batch per tick
-        batch_size = 20
+        batch_size = 32
         added = 0
 
         while self.gallery_queue and added < batch_size:
-            item = self.gallery_queue.pop(0)
+            item = self.gallery_queue.popleft()
 
             if item[0] == "__error__":
                 self.gallery_building = False
@@ -571,6 +574,7 @@ class VideoFrameExtractorApp:
 
         img_label.bind("<Button-1>", on_click)
         meta.bind("<Button-1>", on_click)
+        img_label.bind("<Button-3>", lambda event, idx=frame_idx: self._show_gallery_context_menu(event, idx))
 
     # ---------------- Cache ----------------
 
@@ -925,10 +929,11 @@ class VideoFrameExtractorApp:
         bad = 0
 
         try:
-            for idx in range(self.total_frames):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            idx = 0
+            while idx < self.total_frames:
                 ok, frame = cap.read()
                 if not ok or frame is None:
+                    idx += 1
                     continue
 
                 is_bad, reasons, metrics = self.qeval.evaluate(frame)
@@ -942,6 +947,7 @@ class VideoFrameExtractorApp:
                 if idx % 200 == 0:
                     msg = f"Scanned {idx}/{self.total_frames} (good={len(good)}, bad={bad})"
                     self.root.after(0, lambda m=msg: self.scan_status.config(text=m))
+                idx += 1
 
         finally:
             try:
@@ -1190,6 +1196,64 @@ class VideoFrameExtractorApp:
             return
 
         self._set_status(f"Saved screenshot: {out_path}")
+
+    def save_frame_to_downloads(self, frame_idx: int):
+        if not self.video_path:
+            return
+
+        cap = cv2.VideoCapture(self.video_path)
+        if not cap.isOpened():
+            messagebox.showerror("Save failed", "Could not open video to save frame.")
+            return
+
+        try:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                messagebox.showerror("Save failed", "Could not read the selected frame.")
+                return
+        finally:
+            cap.release()
+
+        downloads_dir = get_downloads_folder()
+        base = os.path.splitext(os.path.basename(self.video_path))[0]
+        filename = f"{base}_frame_{frame_idx:06d}.png"
+        out_path = os.path.join(downloads_dir, filename)
+
+        if os.path.exists(out_path):
+            n = 1
+            while True:
+                alt = os.path.join(downloads_dir, f"{base}_frame_{frame_idx:06d}_{n}.png")
+                if not os.path.exists(alt):
+                    out_path = alt
+                    break
+                n += 1
+
+        ok = cv2.imwrite(out_path, frame)
+        if not ok:
+            messagebox.showerror("Save failed", "Could not save the selected frame.")
+            return
+
+        self._set_status(f"Saved gallery frame: {out_path}")
+
+    def _show_gallery_context_menu(self, event, frame_idx: int):
+        if self.gallery_menu is None:
+            self.gallery_menu = tk.Menu(self.root, tearoff=0)
+            self.gallery_menu.add_command(
+                label="Save image to Downloads",
+                command=lambda: self._save_gallery_context_frame()
+            )
+
+        self._gallery_menu_frame_idx = frame_idx
+        try:
+            self.gallery_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.gallery_menu.grab_release()
+
+    def _save_gallery_context_frame(self):
+        if self._gallery_menu_frame_idx is None:
+            return
+        self.save_frame_to_downloads(self._gallery_menu_frame_idx)
 
     def export_current_frame(self):
         if self.current_bgr is None or not self.video_path:
